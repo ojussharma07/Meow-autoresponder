@@ -1,0 +1,228 @@
+import discord
+from discord import app_commands
+from discord.ext import commands
+import json
+import os
+from dotenv import load_dotenv
+
+# 1. Load the secret token
+load_dotenv()
+TOKEN = os.getenv('RESPONDER_TOKEN')
+
+# 2. Setup Intents & Bot
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+
+bot = commands.Bot(command_prefix="?meow ", intents=intents)
+
+# 🔒 CONFIGURATION
+ALLOWED_CATEGORY_ID = 1402027749350314075 
+ALLOWED_ROLE_IDS = [1491116707199193158]
+
+# 📁 Database Helpers (Everything saved lowercase for perfect case-insensitivity)
+def load_responses():
+    if not os.path.exists("autoresponses.json"):
+        with open("autoresponses.json", "w") as f:
+            json.dump({}, f)
+        return {}
+    try:
+        with open("autoresponses.json", "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error reading database: {e}")
+        return {}
+
+def save_responses(data):
+    with open("autoresponses.json", "w") as f:
+        json.dump(data, f, indent=4)
+
+# 🛡️ Security Check
+def is_slash_authorized(interaction: discord.Interaction) -> bool:
+    is_mod_channel_name = "mod" in interaction.channel.name.lower()
+    is_in_allowed_category = interaction.channel.category_id == ALLOWED_CATEGORY_ID
+    
+    if not (is_mod_channel_name or is_in_allowed_category):
+        return False
+    
+    user_role_ids = [role.id for role in interaction.user.roles]
+    return any(allowed_id in user_role_ids for allowed_id in ALLOWED_ROLE_IDS)
+
+@bot.event
+async def on_ready():
+    print("-----------------------------------------------")
+    print(f"Logged in successfully as: {bot.user.name}")
+    print("Clean 4-Command System: READY")
+    print("-----------------------------------------------")
+
+# 🔄 Maintenance Sync Command
+@bot.command(name="sync")
+@commands.has_permissions(administrator=True)
+async def sync_slash_commands(ctx):
+    await ctx.send("🔄 Syncing commands to Discord...")
+    try:
+        synced = await bot.tree.sync()
+        await ctx.send(f"✅ Successfully synced {len(synced)} slash commands!")
+    except Exception as e:
+        await ctx.send(f"❌ Failed to sync: {e}")
+
+@bot.command(name="clean")
+@commands.has_permissions(administrator=True)
+async def clean_server_commands(ctx):
+    await ctx.send("🧹 Wiping old server-specific ghost commands...")
+    try:
+        # This empties the command list for your specific server
+        bot.tree.clear_commands(guild=ctx.guild)
+        await bot.tree.sync(guild=ctx.guild)
+        await ctx.send("✅ Old commands deleted! You should only see the clean global list now.")
+    except Exception as e:
+        await ctx.send(f"❌ Failed to clean: {e}")        
+
+# 1️⃣ SLASH COMMAND: /add
+@bot.tree.command(name="add", description="Add a new autoresponder trigger")
+@app_commands.describe(
+    trigger="The word to look out for", 
+    emoji="The emoji to react with",
+    case_sensitive="True = Exact word match only (any casing) | False = Match anywhere in a sentence"
+)
+async def add_responder(interaction: discord.Interaction, trigger: str, emoji: str, case_sensitive: bool):
+    if not is_slash_authorized(interaction):
+        return await interaction.response.send_message("❌ This action is restricted to staff.", ephemeral=True)
+        
+    responses = load_responses()
+    guild_id = str(interaction.guild.id)
+    if guild_id not in responses:
+        responses[guild_id] = {}
+        
+    word_key = trigger.lower()
+    responses[guild_id][word_key] = {
+        "emoji": emoji,
+        "exact": case_sensitive
+    }
+    save_responses(responses)
+    
+    match_lbl = "Exact Word Only" if case_sensitive else "Anywhere in Sentence"
+    await interaction.response.send_message(f"✅ **Added!** [{match_lbl}]\nTrigger: **{word_key}** → {emoji}")
+
+# 2️⃣ SLASH COMMAND: /remove
+@bot.tree.command(name="remove", description="Remove an autoresponder trigger")
+@app_commands.describe(trigger="The word trigger you want to delete")
+async def remove_responder(interaction: discord.Interaction, trigger: str):
+    if not is_slash_authorized(interaction):
+        return await interaction.response.send_message("❌ This action is restricted to staff.", ephemeral=True)
+        
+    responses = load_responses()
+    guild_id = str(interaction.guild.id)
+    word_key = trigger.lower()
+    
+    if guild_id in responses and word_key in responses[guild_id]:
+        del responses[guild_id][word_key]
+        save_responses(responses)
+        return await interaction.response.send_message(f"🗑️ Successfully removed trigger: **{word_key}**")
+            
+    await interaction.response.send_message(f"⚠️ No active trigger found for '{trigger}'.")
+
+# 3️⃣ SLASH COMMAND: /edit
+@bot.tree.command(name="edit", description="Edit an existing autoresponder trigger")
+@app_commands.describe(
+    trigger="The existing word trigger to edit", 
+    emoji="The new emoji to react with",
+    case_sensitive="True = Exact word match only (any casing) | False = Match anywhere in a sentence"
+)
+async def edit_responder(interaction: discord.Interaction, trigger: str, emoji: str, case_sensitive: bool):
+    if not is_slash_authorized(interaction):
+        return await interaction.response.send_message("❌ This action is restricted to staff.", ephemeral=True)
+        
+    responses = load_responses()
+    guild_id = str(interaction.guild.id)
+    word_key = trigger.lower()
+    
+    if guild_id not in responses or word_key not in responses[guild_id]:
+        return await interaction.response.send_message(f"❌ '{trigger}' does not exist. Use `/add` to create it first.", ephemeral=True)
+        
+    responses[guild_id][word_key] = {
+        "emoji": emoji,
+        "exact": case_sensitive
+    }
+    save_responses(responses)
+    
+    match_lbl = "Exact Word Only" if case_sensitive else "Anywhere in Sentence"
+    await interaction.response.send_message(f"📝 **Updated!** [{match_lbl}]\nTrigger: **{word_key}** → {emoji}")
+
+# 4️⃣ SLASH COMMAND: /list
+@bot.tree.command(name="list", description="Show all active server autoresponders")
+async def list_responders(interaction: discord.Interaction):
+    if not is_slash_authorized(interaction):
+        return await interaction.response.send_message("❌ This command is restricted.", ephemeral=True)
+        
+    responses = load_responses()
+    guild_id = str(interaction.guild.id)
+    server_responses = responses.get(guild_id, {})
+    
+    list_lines = []
+    for word, data in server_responses.items():
+        if isinstance(data, dict):
+            is_exact = data.get("exact", False)
+            emoji = data.get("emoji", "❓")
+            match_lbl = "Exact Word" if is_exact else "Broad Match"
+            list_lines.append(f"• **{word}** → {emoji} ({match_lbl})")
+        else:
+            list_lines.append(f"• **{word}** → {data} (Broad Match)")
+            
+    list_lines.sort()
+    plain_text_list = "\n".join(list_lines) if list_lines else "No autoresponders setup in this server."
+        
+    embed = discord.Embed(
+        description=f"🌟 **Autoresponders Setup**\n\n{plain_text_list}",
+        color=discord.Color.from_str("#72bcd4")
+    )
+    if interaction.guild and interaction.guild.icon:
+        embed.set_author(name=interaction.guild.name, icon_url=interaction.guild.icon.url)
+    elif interaction.guild:
+        embed.set_author(name=interaction.guild.name)
+        
+    await interaction.response.send_message(embed=embed)
+
+# 📥 Background Message Scanner
+@bot.event
+async def on_message(message):
+    if message.author.bot or not message.guild:
+        return
+
+    responses = load_responses()
+    guild_id = str(message.guild.id)
+    server_responses = responses.get(guild_id, {})
+    
+    # Force clean lowercase message processing to handle HuGa/HUGA/huga identically
+    content_clean = message.content.strip().lower()
+
+    for word, data in server_responses.items():
+        emoji_to_use = data.get("emoji") if isinstance(data, dict) else data
+        is_exact = data.get("exact", False) if isinstance(data, dict) else False
+
+        trigger_matched = False
+        if is_exact:
+            # Must match the standalone word completely (ignoring capitalization)
+            if content_clean == word:
+                trigger_matched = True
+        else:
+            # Broad match anywhere inside the sentence (ignoring capitalization)
+            if word in content_clean:
+                trigger_matched = True
+
+        if trigger_matched:
+            try:
+                if emoji_to_use.startswith("<") and emoji_to_use.endswith(">"):
+                    clean_emoji = emoji_to_use.replace("<:", "").replace("<a:", "").replace(">", "")
+                    name, emoji_id = clean_emoji.split(":")
+                    emoji_obj = bot.get_emoji(int(emoji_id))
+                    await message.add_reaction(emoji_obj if emoji_obj else emoji_to_use)
+                else:
+                    await message.add_reaction(emoji_to_use)
+            except Exception as e:
+                print(f"Failed to add reaction: {e}")
+
+    await bot.process_commands(message)
+
+if __name__ == "__main__":
+    bot.run(TOKEN)
