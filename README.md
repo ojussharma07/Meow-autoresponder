@@ -18,16 +18,15 @@ A lightweight, fully customizable autoresponder Discord bot built with Python an
 
 ## 🚀 Setup & Installation (Local)
 
-1. Clone this repository to your local machine.
-2. Install the required dependencies:
-```bash
-   pip install -r requirements.txt
-   Create a hidden .env file in the root directory and add your bot token:
+**1. Clone this repository to your local machine.**
 
-Code snippet
-   RESPONDER_TOKEN=your_discord_bot_token_here
-Run the bot:
+**2. Install the required dependencies:**
+`pip install -r requirements.txt`
 
-Bash
-   python bot.py
-(Note: Do not commit your .env or database .json files to public repositories!)
+**3. Create a hidden .env file in the root directory and add your bot token:**
+`RESPONDER_TOKEN=your_discord_bot_token_here`
+
+**4. Run the bot:**
+`python bot.py`
+
+*(Note: Do not commit your .env or database .json files to public repositories!)*
